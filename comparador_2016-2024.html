@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Comparador con Zoom sincronizado</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: #111;
+      font-family: Arial, sans-serif;
+      overflow: hidden;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    /* contenedor general */
+    #viewer-container {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      touch-action: none;
+    }
+
+    /* los dos viewers ocupan la misma área (stack) */
+    .viewer {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1; /* left viewer */
+    }
+    .viewer.overlay {
+      z-index: 2; /* right viewer (sobre el left) - se le aplica clip */
+      pointer-events: auto;
+    }
+
+    /* línea vertical y handle */
+    .slider-line {
+      position: absolute;
+      top: 0;
+      left: 50%;
+      width: 6px;            /* grosor visible */
+      margin-left: -3px;
+      height: 100%;
+      background: #000;
+      z-index: 800;
+      transform: none;
+      pointer-events: none; /* la línea por sí sola no captura eventos (el handle sí) */
+    }
+    .handle {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: #fff;
+      border: 2px solid #000;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.6);
+      z-index: 810;
+      cursor: ew-resize;
+      touch-action: none;
+    }
+
+    /* etiquetas */
+    .label-left, .label-right {
+      position: absolute;
+      top: 14px;
+      color: #fff;
+      font-size: 50px;
+      font-weight: 700;
+      text-shadow: 1px 1px 6px rgba(0,0,0,0.8);
+      z-index: 820;
+      pointer-events: none;
+    }
+    .label-left { left: 18px; }
+    .label-right { right: 18px; }
+
+    /* leyenda fija */
+    #leyenda {
+      position: fixed;
+      top: 60px;
+      right: 10px;
+      background: #fff;
+      border: 1px solid #ccc;
+      padding: 5px;
+      z-index: 2000;
+      max-width: 250px;
+    }
+    #leyenda img {
+      max-width: 100%;
+      height: auto;
+      display: block;
+    }
+
+    /* ocultar controles nativos si aparecen */
+    .openseadragon-container .navigator { display: none !important; }
+  </style>
+</head>
+<body>
+  <div id="viewer-container">
+    <div id="viewer-left" class="viewer"></div>
+    <div id="viewer-right" class="viewer overlay"></div>
+
+    <div class="slider-line" id="sliderLine"></div>
+    <div class="handle" id="handle" aria-label="Deslizar"></div>
+
+    <div class="label-left">2008</div>
+    <div class="label-right">2024</div>
+  </div>
+
+  <!-- Leyenda fija -->
+  <div id="leyenda">
+    <img src="leyenda.jpg" alt="Leyenda">
+  </div>
+
+  <!-- OpenSeadragon desde CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/openseadragon.min.js"></script>
+
+  <script>
+    // Inicializar 2 visores (stack)
+    const leftViewer = OpenSeadragon({
+      id: "viewer-left",
+      prefixUrl: "https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/images/",
+      tileSources: { type: "image", url: "2016.jpg" },
+      gestureSettingsMouse: { clickToZoom: false, dblClickToZoom: false, scrollToZoom: true },
+      showNavigator: false
+    });
+
+    const rightViewer = OpenSeadragon({
+      id: "viewer-right",
+      prefixUrl: "https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/images/",
+      tileSources: { type: "image", url: "2024.jpg" },
+      gestureSettingsMouse: { clickToZoom: false, dblClickToZoom: false, scrollToZoom: true },
+      showNavigator: false
+    });
+
+    // Elementos DOM
+    const container = document.getElementById("viewer-container");
+    const overlay = document.getElementById("viewer-right"); // este contenedor se clippea
+    const sliderLine = document.getElementById("sliderLine");
+    const handle = document.getElementById("handle");
+
+    // Sincronización de viewports (evitar loops con flag)
+    let isSyncing = false;
+    function syncView(src, dst) {
+      src.addHandler('viewport-change', function() {
+        if (isSyncing) return;
+        isSyncing = true;
+        try {
+          const center = src.viewport.getCenter();
+          const zoom = src.viewport.getZoom();
+          const rotation = src.viewport.getRotation ? src.viewport.getRotation() : 0;
+          dst.viewport.zoomTo(zoom, center, true);
+          dst.viewport.panTo(center, true);
+          if (dst.viewport.setRotation) dst.viewport.setRotation(rotation);
+        } finally {
+          setTimeout(()=>{ isSyncing = false; }, 0);
+        }
+      });
+    }
+
+    syncView(leftViewer, rightViewer);
+    syncView(rightViewer, leftViewer);
+
+    function updateSliderFromClientX(clientX) {
+      const rect = container.getBoundingClientRect();
+      let offset = clientX - rect.left;
+      if (offset < 0) offset = 0;
+      if (offset > rect.width) offset = rect.width;
+      const percent = (offset / rect.width) * 100;
+
+      overlay.style.clipPath = 'inset(0 0 0 ' + percent + '%)';
+      sliderLine.style.left = offset + 'px';
+      handle.style.left = offset + 'px';
+    }
+
+    let dragging = false;
+    handle.addEventListener('mousedown', e => { dragging = true; e.preventDefault(); });
+    window.addEventListener('mouseup', () => { dragging = false; });
+    window.addEventListener('mousemove', e => { if (!dragging) return; updateSliderFromClientX(e.clientX); });
+
+    handle.addEventListener('touchstart', e => { dragging = true; e.preventDefault(); });
+    window.addEventListener('touchend', () => { dragging = false; });
+    window.addEventListener('touchmove', e => { if (!dragging) return; updateSliderFromClientX(e.touches[0].clientX); }, {passive:false});
+
+    container.addEventListener('click', function(e){
+      if (e.target === handle) return;
+      updateSliderFromClientX(e.clientX);
+    });
+
+    let leftReady = false, rightReady = false;
+    leftViewer.addHandler('open', function() {
+      leftReady = true;
+      if (leftReady && rightReady) centerAndInit();
+    });
+    rightViewer.addHandler('open', function() {
+      rightReady = true;
+      if (leftReady && rightReady) centerAndInit();
+    });
+
+    function centerAndInit(){
+      leftViewer.viewport.goHome(true);
+      const center = leftViewer.viewport.getCenter();
+      const zoom = leftViewer.viewport.getZoom();
+      rightViewer.viewport.zoomTo(zoom, center, true);
+      rightViewer.viewport.panTo(center, true);
+
+      const rect = container.getBoundingClientRect();
+      updateSliderFromClientX(rect.left + rect.width / 2);
+    }
+
+    window.addEventListener('resize', function(){
+      const rect = container.getBoundingClientRect();
+      updateSliderFromClientX(rect.left + rect.width / 2);
+    });
+  </script>
+</body>
+</html>
